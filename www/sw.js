@@ -1,5 +1,5 @@
 // Offline support: precache the app shell + catalog, runtime-cache pack images.
-const VERSION = "v3";
+const VERSION = "v4";
 const SHELL_CACHE = `ptcg-shell-${VERSION}`;
 const IMG_CACHE = "ptcg-images";
 const CATALOG_CACHE = "ptcg-catalog";

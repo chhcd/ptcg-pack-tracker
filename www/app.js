@@ -122,13 +122,16 @@ function setCard(s) {
     </div>`;
   return card;
 }
-function groupCard({ title, subtitle, sets, onclick, badge }) {
+function groupCard({ title, subtitle, sets, onclick, badge, image }) {
   const a = agg(sets);
   const card = document.createElement("div");
   card.className = "set-card group-card";
   card.onclick = onclick;
+  const thumb = image
+    ? `<div class="group-img"><img loading="lazy" src="${image}" alt="" onerror="this.parentElement.innerHTML='${badge}';this.parentElement.className='group-badge'"></div>`
+    : `<div class="group-badge">${badge}</div>`;
   card.innerHTML = `
-    <div class="group-badge">${badge}</div>
+    ${thumb}
     <div class="set-info">
       <div class="set-name">${escapeHtml(title)}</div>
       <div class="set-code">${subtitle}</div>
@@ -212,12 +215,14 @@ function renderEras(lang) {
   for (const era of erasForLang(lang)) {
     const ea = agg(era.sets);
     if (hideComplete && ea.total > 0 && ea.done === ea.total) continue;
+    const rep = era.sets.find((s) => s.logo); // newest set in era with a logo
     cards.push(
       groupCard({
         title: era.eraName,
         subtitle: `${era.sets.length} sets · ${ea.total} packs`,
         sets: era.sets,
         badge: era.sets.length,
+        image: rep ? rep.logo : null,
         onclick: () => (location.hash = `#/e/${lang}/${era.eraId}`),
       }),
     );
@@ -390,8 +395,15 @@ async function checkForUpdate() {
     if (!latest || latest === DATA.commit) return;
     const tree = await ghJSON(`git/trees/${latest}?recursive=1`);
     if (!tree.tree) return;
+    let readmeText = "";
+    try {
+      const r = await fetch(
+        `https://raw.githubusercontent.com/${REPO_INFO.OWNER}/${REPO_INFO.REPO}/${latest}/README.md`,
+      );
+      if (r.ok) readmeText = await r.text();
+    } catch {}
     const prevPacks = DATA.packCount;
-    const rebuilt = buildCatalog(tree.tree, latest);
+    const rebuilt = buildCatalog(tree.tree, latest, readmeText);
     DATA = rebuilt;
     indexCatalog();
     await writeLiveCache(rebuilt);

@@ -11,12 +11,21 @@ export const LANG_NAMES = {
   en: "English",
   ja: "Japanese",
   de: "German",
+  zh: "Chinese",
   ko: "Korean",
   fr: "French",
   it: "Italian",
   es: "Spanish",
   ru: "Russian",
 };
+
+function normalizeLang(l) {
+  if (!l) return null;
+  const s = String(l).toLowerCase();
+  if (s.startsWith("zh")) return "zh";
+  const m = s.match(/^[a-z]{2}/);
+  return m ? m[0] : "en";
+}
 
 function splitLang(code) {
   const m = code.match(/^([a-z]{2})_(.+)$/);
@@ -25,11 +34,12 @@ function splitLang(code) {
 }
 
 /* ---------------- eras (newest first) ---------------- */
-// rank 0 = newest. Adjust order here to change how eras are sorted.
+// rank 0 = newest. Physical eras only — Pokémon TCG Pocket is intentionally
+// excluded. `test` is a heuristic fallback for codes missing from the repo
+// README table (which is the primary source of era via its "Series" column).
 export const ERAS = [
   { id: "me", name: "Mega Evolution", test: (c) => /^me(\d|p)/.test(c) || c === "mep" || c === "mepfpcs1" },
   { id: "sv", name: "Scarlet & Violet", test: (c) => /^sv\d/.test(c) || /^(r|z)sv/.test(c) || ["sve", "svp", "sv3pt5"].includes(c) },
-  { id: "tcgp", name: "Pokémon TCG Pocket", test: (c) => c.startsWith("tcgp") },
   { id: "swsh", name: "Sword & Shield", test: (c) => c.startsWith("swsh") || ["cel25", "cel25c", "pgo", "fut20"].includes(c) },
   { id: "sm", name: "Sun & Moon", test: (c) => /^sm/.test(c) || ["det1", "smp", "sma"].includes(c) },
   { id: "xy", name: "XY", test: (c) => /^xy/.test(c) || ["g1", "dc1"].includes(c) },
@@ -42,8 +52,46 @@ export const ERAS = [
   { id: "wotc", name: "Original Series", test: (c) => /^base/.test(c) || /^gym/.test(c) || /^neo/.test(c) || c === "si1" },
   { id: "other", name: "Other & Promos", test: () => true },
 ];
+const ERA_RANK = new Map(ERAS.map((e, i) => [e.id, i]));
+
+// Sets from these series are dropped entirely (not part of the physical game).
+const DROP_SERIES = new Set(["Trading Card Game Pocket"]);
+
+// Repo README "Series" column -> era id. Language-suffixed variants
+// ("… JP" / "… CN") are stripped before lookup; localized names map directly.
+const SERIES_TO_ERA = {
+  "Mega Evolution": "me", "Mega Entwicklung": "me",
+  "Scarlet & Violet": "sv", "Karmesin & Purpur": "sv",
+  "Sword & Shield": "swsh", "Schwert & Schild": "swsh",
+  "Sun & Moon": "sm",
+  XY: "xy",
+  "Black & White": "bw",
+  "HeartGold & SoulSilver": "hgss",
+  Platinum: "pl",
+  "Diamond & Pearl": "dp",
+  EX: "ex", NP: "ex", POP: "ex",
+  "E-Card": "ecard",
+  Base: "wotc", Gym: "wotc", Neo: "wotc", Grundset: "wotc",
+  Other: "other", Special: "other",
+};
+
+function eraById(id) {
+  const rank = ERA_RANK.get(id);
+  return rank === undefined ? null : { eraId: id, eraName: ERAS[rank].name, eraRank: rank };
+}
+
+// Returns era info, null to DROP the set, or undefined if series is unknown
+// (caller falls back to the heuristic).
+function eraFromSeries(series) {
+  if (!series) return undefined;
+  const s = series.replace(/\s+(JP|CN|EN|DE|KR|FR|IT|ES)$/i, "").trim();
+  if (DROP_SERIES.has(s) || DROP_SERIES.has(series)) return null;
+  const id = SERIES_TO_ERA[s];
+  return id ? eraById(id) : undefined;
+}
 
 function classifyEra(base) {
+  if (base.startsWith("tcgp")) return null; // TCG Pocket -> drop
   for (let i = 0; i < ERAS.length; i++) {
     if (ERAS[i].test(base)) return { eraId: ERAS[i].id, eraName: ERAS[i].name, eraRank: i };
   }
@@ -51,19 +99,31 @@ function classifyEra(base) {
   return { eraId: ERAS[last].id, eraName: ERAS[last].name, eraRank: last };
 }
 
-// Explicit release order for Pokémon TCG Pocket (codes are too irregular to parse).
-const TCGP_ORDER = [
-  "tcgp1", "tcgp1a", "tcgpa2", "tcgpa2a", "tcgpa2b", "tcgpa3", "tcgpa3a",
-  "tcgpa3b", "tcgpa4", "tcgpa4a", "tcgpa4b", "tcgpb1", "tcgpb1a", "tcgpb2",
-  "tcgpb2a", "tcgpb2b", "tcgpb3", "tcgppa", "tcgppb",
-];
+/* ---------------- repo README table ---------------- */
+// Parses the "| ID | Language | Name | Series |" markdown table into
+// code -> { name, series }.
+export function parseReadme(text) {
+  const meta = new Map();
+  if (!text) return meta;
+  let idx = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.startsWith("|")) continue;
+    const cells = line.split("|").map((c) => c.trim());
+    if (cells.length < 6) continue; // ['', id, lang, name, series, '']
+    const id = cells[1];
+    const name = cells[3];
+    const series = cells[4];
+    if (!id || id.toLowerCase() === "id" || /^-+$/.test(id)) continue;
+    // Row index is chronological within each series block; used for ordering.
+    // Keep the first row for a duplicated id (sub-variant rows share a code).
+    if (!meta.has(id)) meta.set(id, { name, lang: cells[2], series, idx: idx });
+    idx++;
+  }
+  return meta;
+}
 
 // Higher = newer, used to sort sets within an era.
 function computeOrder(base) {
-  if (base.startsWith("tcgp")) {
-    const i = TCGP_ORDER.indexOf(base);
-    return i === -1 ? 0 : i + 1;
-  }
   const m = base.match(/(\d+)(?:pt(\d+))?/);
   let n = m ? parseInt(m[1], 10) : 0;
   if (m && m[2]) n += parseInt(m[2], 10) / 10;
@@ -199,7 +259,10 @@ function mostCommon(arr) {
 
 /* ---------------- catalog build ---------------- */
 // tree: array of { path, type } from the GitHub git-trees API.
-export function buildCatalog(tree, commit) {
+// readmeText: optional repo README markdown, used for authoritative set names
+// and era grouping (via its "Series" column).
+export function buildCatalog(tree, commit, readmeText) {
+  const meta = parseReadme(readmeText);
   const raw = (p) =>
     `https://raw.githubusercontent.com/${OWNER}/${REPO}/${commit}/${encodeURI(p)}`;
   const isImg = (p) => /\.(webp|png|jpg|jpeg)$/i.test(p);
@@ -226,15 +289,26 @@ export function buildCatalog(tree, commit) {
 
   const sets = [];
   for (const [code, { labels, packs }] of bySet) {
-    const { lang, base } = splitLang(code);
-    const { eraId, eraName, eraRank } = classifyEra(base);
-    const name = resolveSetName(base, mostCommon(labels));
+    const { lang: codeLang, base } = splitLang(code);
+    const m = meta.get(code);
+    const lang = (m && normalizeLang(m.lang)) || codeLang;
+
+    // Era: prefer the README "Series" column, fall back to the heuristic.
+    // A null result means the set is dropped (e.g. TCG Pocket).
+    let era = m ? eraFromSeries(m.series) : undefined;
+    if (era === undefined) era = classifyEra(base);
+    if (!era) continue; // dropped series / TCG Pocket
+
+    const name = (m && m.name) || resolveSetName(base, mostCommon(labels));
     let designN = 0;
     for (const p of packs) if (!p.name) p.name = `Design ${++designN}`;
     packs.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     sets.push({
-      code, name, lang, eraId, eraName, eraRank,
-      order: computeOrder(base),
+      code, name, lang,
+      eraId: era.eraId, eraName: era.eraName, eraRank: era.eraRank,
+      // README row index is chronological (higher = newer). Fall back to the
+      // filename/code heuristic only for sets missing from the table.
+      order: m && m.idx != null ? m.idx : computeOrder(base) - 1000,
       logo: logos.get(code) || null,
       packCount: packs.length,
       packs,

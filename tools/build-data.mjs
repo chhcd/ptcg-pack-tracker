@@ -40,7 +40,18 @@ async function main() {
   );
   if (tree.truncated) console.warn("WARNING: git tree truncated; catalog may be incomplete.");
 
-  const data = buildCatalog(tree.tree, commit);
+  // README table gives authoritative set names + era grouping.
+  let readmeText = "";
+  try {
+    const r = await fetch(
+      `https://raw.githubusercontent.com/${OWNER}/${REPO}/${commit}/README.md`,
+    );
+    if (r.ok) readmeText = await r.text();
+  } catch {
+    console.warn("WARNING: could not fetch README; using name/era fallbacks.");
+  }
+
+  const data = buildCatalog(tree.tree, commit, readmeText);
   mkdirSync(dirname(outFile), { recursive: true });
   writeFileSync(outFile, JSON.stringify(data));
   console.log(`Wrote ${outFile}: ${data.setCount} sets, ${data.packCount} packs.`);
