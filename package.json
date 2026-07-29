@@ -1,0 +1,15 @@
+{
+  "name": "ptcg-pack-tracker",
+  "version": "1.0.0",
+  "description": "Track your Pokémon TCG collection by pack artwork. Installable PWA, Capacitor-ready.",
+  "type": "module",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "serve": "node tools/serve.mjs",
+    "build-data": "node tools/build-data.mjs",
+    "make-icons": "node tools/make-icons.mjs"
+  },
+  "keywords": ["pokemon", "tcg", "collection", "pwa", "tracker"],
+  "license": "MIT",
+  "private": true
+}

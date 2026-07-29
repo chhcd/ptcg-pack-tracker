@@ -1,0 +1,8 @@
+{
+  "appId": "com.diego.ptcgpacktracker",
+  "appName": "Pack Tracker",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}

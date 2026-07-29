@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#e74c3c" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>PTCG Pack Tracker</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <button id="backBtn" class="icon-btn" hidden aria-label="Back">‹</button>
+      <div class="title-wrap">
+        <h1 id="title">Pack Tracker</h1>
+        <p id="subtitle" class="subtitle"></p>
+      </div>
+      <button id="menuBtn" class="icon-btn" aria-label="Menu">⋮</button>
+    </header>
+
+    <div id="progressBar" class="progress-outer" aria-hidden="true">
+      <div id="progressFill" class="progress-inner"></div>
+    </div>
+
+    <div id="searchWrap" class="search-wrap">
+      <input id="search" type="search" placeholder="Search sets…" autocomplete="off" />
+      <label class="chk">
+        <input id="hideComplete" type="checkbox" /> Hide complete
+      </label>
+    </div>
+
+    <main id="app" class="app"><p class="loading">Loading catalog…</p></main>
+
+    <!-- Menu sheet -->
+    <div id="sheet" class="sheet" hidden>
+      <div class="sheet-card">
+        <h2>Settings</h2>
+        <label class="menu-item toggle">
+          <span>
+            <strong>Show other languages</strong>
+            <small>Off = English only. On adds a language chooser.</small>
+          </span>
+          <input id="optMultiLang" type="checkbox" />
+        </label>
+        <label class="menu-item toggle">
+          <span>
+            <strong>Auto-update from GitHub</strong>
+            <small>Pull newly released sets when online.</small>
+          </span>
+          <input id="optAutoUpdate" type="checkbox" />
+        </label>
+
+        <h2 class="mt">Collection</h2>
+        <button id="exportBtn" class="menu-item">⬇︎ Export backup (.json)</button>
+        <button id="importBtn" class="menu-item">⬆︎ Import backup</button>
+        <button id="clearBtn" class="menu-item danger">🗑 Reset all progress</button>
+        <p id="metaInfo" class="meta-info"></p>
+        <button id="closeSheet" class="menu-item close">Close</button>
+      </div>
+    </div>
+    <input id="importFile" type="file" accept="application/json,.json" hidden />
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
