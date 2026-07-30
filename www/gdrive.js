@@ -13,7 +13,8 @@ const GIS_SRC = "https://accounts.google.com/gsi/client";
 const FILE_NAME = "ptcg-pack-tracker-backup.json";
 
 // Optionally hard-code your Client ID here instead of using the Settings field.
-export const DEFAULT_CLIENT_ID = "";
+export const DEFAULT_CLIENT_ID =
+  "652207901743-ihc96b9bh4pg4kl0lmc36779trf6mcu3.apps.googleusercontent.com";
 
 let clientId = "";
 let tokenClient = null;
