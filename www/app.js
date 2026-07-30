@@ -1,5 +1,6 @@
 "use strict";
 import { buildCatalog, LANG_NAMES, REPO_INFO } from "./catalog.mjs";
+import * as gdrive from "./gdrive.js";
 
 const STORE_KEY = "ptcg-collection-v1";
 const SETTINGS_KEY = "ptcg-settings-v1";
@@ -13,7 +14,14 @@ const $ = (id) => document.getElementById(id);
 let DATA = null;
 let owned = new Set(loadJSON(STORE_KEY, []));
 let settings = Object.assign(
-  { multiLang: false, autoUpdate: true, showPromos: true, backupReminders: true },
+  {
+    multiLang: false,
+    autoUpdate: true,
+    showPromos: true,
+    backupReminders: true,
+    gdriveClientId: "",
+    gdriveConnected: false,
+  },
   loadJSON(SETTINGS_KEY, {}),
 );
 const setByCode = new Map();
@@ -288,6 +296,7 @@ function renderPacks(code) {
       const oo = ownedInSet(s);
       $("subtitle").textContent = `${s.code.toUpperCase()} · ${oo}/${s.packCount} packs`;
       setProgress(oo, s.packCount);
+      scheduleDriveSync();
     };
     grid.appendChild(el);
   }
@@ -406,6 +415,7 @@ function hideReminder() {
 }
 function maybeShowBackupReminder() {
   if (!settings.backupReminders || owned.size === 0) return hideReminder();
+  if (settings.gdriveConnected) return hideReminder(); // Drive auto-sync covers it
   const last = lastBackupAt();
   const snooze = Number(localStorage.getItem(SNOOZE_KEY) || 0);
   if (Date.now() - last < BACKUP_INTERVAL || Date.now() < snooze) return hideReminder();
@@ -416,12 +426,120 @@ function maybeShowBackupReminder() {
   $("backupReminder").hidden = false;
 }
 
+/* ---------------- Google Drive sync ---------------- */
+let driveSyncTimer = null;
+
+function updateDriveStatus() {
+  const el = $("driveStatus");
+  if (!el) return;
+  if (!gdrive.hasClientId()) el.textContent = "Not configured — add a Client ID below to enable.";
+  else if (gdrive.isConnected()) el.textContent = "Connected — auto-syncing to your Drive.";
+  else if (settings.gdriveConnected) el.textContent = "Configured — reconnecting…";
+  else el.textContent = "Configured — tap Connect to sign in.";
+  const connected = gdrive.isConnected();
+  $("driveConnectBtn").hidden = connected;
+  $("driveDisconnectBtn").hidden = !connected;
+  $("driveRestoreBtn").hidden = !connected;
+}
+
+// Union-merge with the Drive copy (never loses owned packs), then push.
+async function syncWithDrive(pull) {
+  if (!gdrive.isConnected()) return;
+  try {
+    if (pull) {
+      const remote = await gdrive.download();
+      if (remote && Array.isArray(remote.owned)) {
+        const before = owned.size;
+        for (const id of remote.owned) owned.add(id);
+        if (owned.size !== before) {
+          saveOwned();
+          route();
+        }
+      }
+    }
+    await gdrive.upload(JSON.stringify(backupPayload()));
+    markBackedUp();
+  } catch {
+    /* offline / token expired — will retry on next change or launch */
+  }
+  updateDriveStatus();
+}
+
+// Debounced push after collection changes.
+function scheduleDriveSync() {
+  if (!gdrive.isConnected()) return;
+  clearTimeout(driveSyncTimer);
+  driveSyncTimer = setTimeout(() => {
+    gdrive
+      .upload(JSON.stringify(backupPayload()))
+      .then(() => markBackedUp())
+      .catch(() => {});
+  }, 2500);
+}
+
+async function connectDrive() {
+  const id = ($("driveClientId").value || "").trim() || gdrive.DEFAULT_CLIENT_ID;
+  if (!id) {
+    toast("Enter a Google Client ID first");
+    return;
+  }
+  settings.gdriveClientId = id;
+  saveSettings();
+  gdrive.setClientId(id);
+  toast("Opening Google sign-in…");
+  try {
+    if (await gdrive.connect()) {
+      settings.gdriveConnected = true;
+      saveSettings();
+      await syncWithDrive(true);
+      toast("Google Drive connected");
+    } else {
+      toast("Connection cancelled");
+    }
+  } catch {
+    toast("Drive connect failed — check the Client ID & origin");
+  }
+  updateDriveStatus();
+}
+
+function disconnectDrive() {
+  gdrive.disconnect();
+  settings.gdriveConnected = false;
+  saveSettings();
+  toast("Google Drive disconnected");
+  updateDriveStatus();
+}
+
+async function restoreFromDrive() {
+  if (!gdrive.isConnected()) {
+    toast("Connect Drive first");
+    return;
+  }
+  try {
+    const remote = await gdrive.download();
+    if (remote && Array.isArray(remote.owned)) {
+      owned = new Set(remote.owned);
+      saveOwned();
+      markBackedUp();
+      route();
+      toast(`Restored ${remote.owned.length} packs from Drive`);
+    } else {
+      toast("No Drive backup found yet");
+    }
+  } catch {
+    toast("Restore failed");
+  }
+  updateDriveStatus();
+}
+
 /* ---------------- settings sheet ---------------- */
 function openSheet() {
   $("optMultiLang").checked = settings.multiLang;
   $("optAutoUpdate").checked = settings.autoUpdate;
   $("optShowPromos").checked = settings.showPromos;
   $("optBackupReminders").checked = settings.backupReminders;
+  $("driveClientId").value = settings.gdriveClientId || "";
+  updateDriveStatus();
   const updated = DATA.generatedAt ? new Date(DATA.generatedAt).toLocaleDateString() : "?";
   $("metaInfo").textContent =
     `Catalog: ${DATA.setCount} sets · ${DATA.packCount} packs · commit ${String(DATA.commit).slice(0, 7)} · updated ${updated}`;
@@ -528,6 +646,9 @@ async function init() {
     maybeShowBackupReminder();
   };
   $("cloudBtn").onclick = () => { closeSheet(); cloudBackup(); };
+  $("driveConnectBtn").onclick = connectDrive;
+  $("driveDisconnectBtn").onclick = disconnectDrive;
+  $("driveRestoreBtn").onclick = restoreFromDrive;
   $("exportBtn").onclick = () => { exportBackup(); closeSheet(); };
   $("importBtn").onclick = () => $("importFile").click();
   $("reminderBackup").onclick = () => cloudBackup();
@@ -563,6 +684,19 @@ async function init() {
   registerSW();
   checkForUpdate();
   maybeShowBackupReminder();
+  initDrive();
+}
+
+// Configure Drive from saved settings and silently reconnect if the user
+// previously connected (no popup for an already-consented session).
+async function initDrive() {
+  gdrive.setClientId(settings.gdriveClientId || gdrive.DEFAULT_CLIENT_ID);
+  if (settings.gdriveConnected && gdrive.hasClientId() && navigator.onLine) {
+    if (await gdrive.reconnect()) {
+      await syncWithDrive(true);
+    }
+    updateDriveStatus();
+  }
 }
 async function requestPersistence() {
   try {

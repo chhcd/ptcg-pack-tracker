@@ -65,13 +65,43 @@ Your collection lives in on-device storage, so backups matter. Options in the me
   last backup and you have packs marked, a banner nudges you with a one-tap
   *Back up* button so you don't forget. *Later* snoozes it for a day.
 
-> **Why not fully-automatic background cloud sync?** A pure static PWA (no server)
-> can't silently push to a cloud provider in the background: each of OneDrive /
-> Google Drive / Dropbox requires OAuth via a developer app you'd register, and
-> browsers block background uploads without stored tokens + a backend. The Web
-> Share + reminder approach gives reliable, one-tap cloud backups on Android with
-> zero setup. Full automatic Google Drive sync can be added later if you register a
-> free OAuth Client ID (see Plan).
+> **Why not fully-automatic background cloud sync for OneDrive/Dropbox?** A pure
+> static PWA (no server) can't silently push to a cloud provider in the background
+> without OAuth via a registered developer app + stored tokens. For **Google Drive**
+> this app implements a proper client-side OAuth sync (below); OneDrive/Dropbox use
+> the zero-setup Web Share path above.
+
+### Automatic Google Drive sync (optional)
+
+Connect once and your collection auto-syncs to **your own** Google Drive on every
+change and on launch — no file juggling.
+
+**User experience:** Settings → *Connect Google Drive* → Google's consent screen →
+done. From then on it silently backs up (debounced) whenever you check/uncheck a
+pack, and merges from Drive on launch (union — it never loses owned packs across
+devices). *Restore from Drive* pulls the cloud copy; *Disconnect* revokes access.
+Uses the narrow `drive.file` scope, so the app can only see the one backup file it
+creates. Backup reminders are auto-suppressed while connected.
+
+**Do end users each need a Client ID? No.** The app operator registers **one**
+public OAuth Client ID; every user just taps *Connect*.
+
+**One-time operator setup:**
+1. In [Google Cloud Console](https://console.cloud.google.com/) create/select a
+   project → **APIs & Services → Credentials**.
+2. Configure the **OAuth consent screen** (External). For personal use keep it in
+   *Testing* and add users' Google emails as **Test users** (up to 100). To open it
+   to anyone, publish it (unverified shows a warning; verified needs Google review).
+3. Create **OAuth client ID → Web application**. Add **Authorized JavaScript origin**
+   `https://chhcd.github.io` (and `http://localhost:5173` for local dev).
+4. Copy the Client ID (`…apps.googleusercontent.com`) and either paste it in the
+   app's Settings → *One-time setup* field, or hard-code it as `DEFAULT_CLIENT_ID`
+   in `www/gdrive.js`.
+5. Enable the **Google Drive API** for the project.
+
+> Sync uses union semantics (safe against data loss); un-checking a pack on one
+> device won't remove it from another. Access tokens are held in memory only and
+> refreshed silently — nothing sensitive is persisted.
 
 ## Auto-update — does it pull new sets automatically?
 
@@ -99,9 +129,9 @@ catalog. (Uses the public GitHub API, ~60 requests/hour/IP; one request per laun
 - [x] Exclude the digital Pokémon TCG Pocket line
 - [x] Runtime GitHub auto-update (rebuild in-browser, offline cache, fallback)
 - [x] Cloud backup via Web Share + backup reminders; JSON save/restore + reset
+- [x] Automatic Google Drive sync (client-side OAuth, `drive.file`, union merge)
 - [x] Offline service worker (app shell + runtime image cache)
 - [x] Installable manifest + persistent storage request
-- [ ] (Optional) Full Google Drive auto-sync (needs a free OAuth Client ID)
 - [ ] (Optional) Capacitor wrap → APK / Play Store
 
 ## Usage
@@ -158,8 +188,9 @@ ptcg-pack-tracker/
 ├─ www/                      # web app (Capacitor webDir)
 │  ├─ index.html
 │  ├─ styles.css
-│  ├─ app.js                 # ES module: nav, settings, auto-update
+│  ├─ app.js                 # ES module: nav, settings, auto-update, backups
 │  ├─ catalog.mjs            # shared catalog logic (names, eras, order, lang)
+│  ├─ gdrive.js              # Google Drive OAuth + sync (drive.file)
 │  ├─ sw.js                  # offline service worker
 │  ├─ manifest.webmanifest
 │  ├─ data.json             # generated catalog (bundled fallback)

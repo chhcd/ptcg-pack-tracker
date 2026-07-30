@@ -298,6 +298,27 @@ html, body {
 .menu-item.close { text-align: center; background: transparent; }
 .meta-info { font-size: 11px; color: var(--muted); margin: 6px 2px 14px; }
 
+.drive-setup { margin: -4px 2px 14px; }
+.drive-setup summary { font-size: 13px; color: var(--muted); cursor: pointer; padding: 4px 0; }
+.drive-setup input {
+  width: 100%;
+  margin: 8px 0;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  outline: none;
+}
+.drive-setup small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.drive-setup code {
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
 .toast {
   position: fixed;
   left: 50%;
