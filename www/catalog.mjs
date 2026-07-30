@@ -300,11 +300,12 @@ export function buildCatalog(tree, commit, readmeText) {
     if (!era) continue; // dropped series / TCG Pocket
 
     const name = (m && m.name) || resolveSetName(base, mostCommon(labels));
+    const isPromo = /promo/i.test(name);
     let designN = 0;
     for (const p of packs) if (!p.name) p.name = `Design ${++designN}`;
     packs.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     sets.push({
-      code, name, lang,
+      code, name, lang, isPromo,
       eraId: era.eraId, eraName: era.eraName, eraRank: era.eraRank,
       // README row index is chronological (higher = newer). Fall back to the
       // filename/code heuristic only for sets missing from the table.

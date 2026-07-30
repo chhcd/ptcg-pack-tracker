@@ -70,6 +70,29 @@ html, body {
   transition: width 0.3s ease;
 }
 
+.reminder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: #2a2333;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.reminder #reminderText { flex: 1; min-width: 140px; color: var(--text); }
+.reminder-actions { display: flex; gap: 8px; }
+.reminder-btn {
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.reminder-btn.primary { background: var(--accent-2); border-color: var(--accent-2); color: #fff; font-weight: 600; }
+
 .search-wrap {
   display: flex;
   align-items: center;

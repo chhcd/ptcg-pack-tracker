@@ -3,6 +3,9 @@ import { buildCatalog, LANG_NAMES, REPO_INFO } from "./catalog.mjs";
 
 const STORE_KEY = "ptcg-collection-v1";
 const SETTINGS_KEY = "ptcg-settings-v1";
+const LASTBACKUP_KEY = "ptcg-last-backup";
+const SNOOZE_KEY = "ptcg-backup-snooze";
+const BACKUP_INTERVAL = 7 * 24 * 60 * 60 * 1000; // remind after ~7 days
 const CATALOG_CACHE = "ptcg-catalog";
 const LIVE_URL = "/live-catalog.json"; // synthetic key inside CATALOG_CACHE
 const $ = (id) => document.getElementById(id);
@@ -10,7 +13,7 @@ const $ = (id) => document.getElementById(id);
 let DATA = null;
 let owned = new Set(loadJSON(STORE_KEY, []));
 let settings = Object.assign(
-  { multiLang: false, autoUpdate: true },
+  { multiLang: false, autoUpdate: true, showPromos: true, backupReminders: true },
   loadJSON(SETTINGS_KEY, {}),
 );
 const setByCode = new Map();
@@ -36,9 +39,14 @@ function indexCatalog() {
   setByCode.clear();
   for (const s of DATA.sets) setByCode.set(s.code, s);
 }
+// Sets shown in list/aggregate views, honoring the "show promos" setting.
+// (Direct set/pack views still work for promo sets via setByCode.)
+function visibleSets() {
+  return settings.showPromos ? DATA.sets : DATA.sets.filter((s) => !s.isPromo);
+}
 function langsPresent() {
   const seen = new Map();
-  for (const s of DATA.sets) {
+  for (const s of visibleSets()) {
     if (!seen.has(s.lang)) seen.set(s.lang, { lang: s.lang, sets: [], packs: 0 });
     const e = seen.get(s.lang);
     e.sets.push(s);
@@ -52,7 +60,7 @@ function langsPresent() {
 }
 function erasForLang(lang) {
   const map = new Map();
-  for (const s of DATA.sets) {
+  for (const s of visibleSets()) {
     if (s.lang !== lang) continue;
     if (!map.has(s.eraId))
       map.set(s.eraId, { eraId: s.eraId, eraName: s.eraName, eraRank: s.eraRank, sets: [] });
@@ -61,7 +69,7 @@ function erasForLang(lang) {
   return [...map.values()].sort((a, b) => a.eraRank - b.eraRank);
 }
 function setsFor(lang, eraId) {
-  return DATA.sets.filter((s) => s.lang === lang && s.eraId === eraId);
+  return visibleSets().filter((s) => s.lang === lang && s.eraId === eraId);
 }
 
 /* ---------------- progress helpers ---------------- */
@@ -167,7 +175,7 @@ function renderList(nodes, emptyMsg) {
 function renderSearch(scopeLang) {
   const q = currentQuery();
   const hideComplete = $("hideComplete").checked;
-  const matches = DATA.sets.filter((s) => {
+  const matches = visibleSets().filter((s) => {
     if (scopeLang && s.lang !== scopeLang) return false;
     if (hideComplete && s.packCount > 0 && ownedInSet(s) === s.packCount) return false;
     return s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q);
@@ -175,7 +183,7 @@ function renderSearch(scopeLang) {
   renderList(matches.map(setCard), `No sets match “${escapeHtml(q)}”.`);
 }
 function renderLanguages() {
-  const overall = agg(DATA.sets.filter((s) => s.lang === "en"));
+  const overall = agg(visibleSets().filter((s) => s.lang === "en"));
   header("Pack Tracker", `${overall.done}/${overall.total} English packs`, false, true);
   setProgress(overall.done, overall.total);
   if (currentQuery()) return renderSearch(null);
@@ -198,7 +206,7 @@ function renderLanguages() {
   renderList(cards, "No languages available.");
 }
 function renderEras(lang) {
-  const langSets = DATA.sets.filter((s) => s.lang === lang);
+  const langSets = visibleSets().filter((s) => s.lang === lang);
   const a = agg(langSets);
   const langName = LANG_NAMES[lang] || lang.toUpperCase();
   header(
@@ -215,7 +223,17 @@ function renderEras(lang) {
   for (const era of erasForLang(lang)) {
     const ea = agg(era.sets);
     if (hideComplete && ea.total > 0 && ea.done === ea.total) continue;
-    const rep = era.sets.find((s) => s.logo); // newest set in era with a logo
+    // Use the era's namesake logo: the earliest known (in the repo README),
+    // non-promo set that has one — e.g. sv1 "Scarlet & Violet". Prefer sets
+    // with a known chronological order (order >= 0) so obscure/unlisted sets
+    // don't hijack the era image.
+    const oldestFirst = [...era.sets].reverse();
+    const known = oldestFirst.filter((s) => s.order >= 0);
+    const rep =
+      known.find((s) => s.logo && !s.isPromo) ||
+      known.find((s) => s.logo) ||
+      oldestFirst.find((s) => s.logo && !s.isPromo) ||
+      oldestFirst.find((s) => s.logo);
     cards.push(
       groupCard({
         title: era.eraName,
@@ -302,22 +320,63 @@ function goBack() {
 }
 
 /* ---------------- backup / restore ---------------- */
-function exportBackup() {
-  const payload = {
+function backupPayload() {
+  return {
     app: "ptcg-pack-tracker",
     version: 1,
     exportedAt: new Date().toISOString(),
     catalogCommit: DATA.commit,
     owned: [...owned],
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+}
+function backupFilename() {
+  return `ptcg-collection-${new Date().toISOString().slice(0, 10)}.json`;
+}
+function markBackedUp() {
+  localStorage.setItem(LASTBACKUP_KEY, String(Date.now()));
+  localStorage.removeItem(SNOOZE_KEY);
+  hideReminder();
+}
+function downloadJSON(json, filename) {
+  const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `ptcg-collection-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
-  toast("Backup exported");
+}
+function exportBackup() {
+  downloadJSON(JSON.stringify(backupPayload(), null, 2), backupFilename());
+  markBackedUp();
+  toast("Backup saved");
+}
+// Send the backup straight to a cloud app (OneDrive/Drive/Dropbox/…) via the
+// OS share sheet on supported devices; fall back to a file download.
+async function cloudBackup() {
+  const json = JSON.stringify(backupPayload(), null, 2);
+  const filename = backupFilename();
+  const file = new File([json], filename, { type: "application/json" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({
+        files: [file],
+        title: "Pokémon Pack Tracker backup",
+        text: "Save this backup to your cloud storage (OneDrive, Google Drive, Dropbox…).",
+      });
+      markBackedUp();
+      toast("Backup sent to cloud");
+    } catch (e) {
+      if (e && e.name === "AbortError") return; // user dismissed the share sheet
+      downloadJSON(json, filename);
+      markBackedUp();
+      toast("Backup saved (sharing unavailable)");
+    }
+  } else {
+    downloadJSON(json, filename);
+    markBackedUp();
+    toast("Backup saved — move it to your cloud folder");
+  }
 }
 function importBackup(file) {
   const reader = new FileReader();
@@ -328,19 +387,41 @@ function importBackup(file) {
       if (!Array.isArray(arr)) throw new Error("bad file");
       owned = new Set(arr);
       saveOwned();
+      markBackedUp();
       route();
-      toast(`Imported ${arr.length} packs`);
+      toast(`Restored ${arr.length} packs`);
     } catch {
-      toast("Import failed: invalid file");
+      toast("Restore failed: invalid file");
     }
   };
   reader.readAsText(file);
+}
+
+/* ---------------- backup reminder ---------------- */
+function lastBackupAt() {
+  return Number(localStorage.getItem(LASTBACKUP_KEY) || 0);
+}
+function hideReminder() {
+  $("backupReminder").hidden = true;
+}
+function maybeShowBackupReminder() {
+  if (!settings.backupReminders || owned.size === 0) return hideReminder();
+  const last = lastBackupAt();
+  const snooze = Number(localStorage.getItem(SNOOZE_KEY) || 0);
+  if (Date.now() - last < BACKUP_INTERVAL || Date.now() < snooze) return hideReminder();
+  const days = last ? Math.floor((Date.now() - last) / 86400000) : null;
+  $("reminderText").textContent = last
+    ? `Last backup ${days} day${days === 1 ? "" : "s"} ago — keep it safe in the cloud.`
+    : "Your collection isn't backed up yet — save it to the cloud.";
+  $("backupReminder").hidden = false;
 }
 
 /* ---------------- settings sheet ---------------- */
 function openSheet() {
   $("optMultiLang").checked = settings.multiLang;
   $("optAutoUpdate").checked = settings.autoUpdate;
+  $("optShowPromos").checked = settings.showPromos;
+  $("optBackupReminders").checked = settings.backupReminders;
   const updated = DATA.generatedAt ? new Date(DATA.generatedAt).toLocaleDateString() : "?";
   $("metaInfo").textContent =
     `Catalog: ${DATA.setCount} sets · ${DATA.packCount} packs · commit ${String(DATA.commit).slice(0, 7)} · updated ${updated}`;
@@ -436,8 +517,24 @@ async function init() {
     saveSettings();
     if (settings.autoUpdate) checkForUpdate();
   };
+  $("optShowPromos").onchange = (e) => {
+    settings.showPromos = e.target.checked;
+    saveSettings();
+    route();
+  };
+  $("optBackupReminders").onchange = (e) => {
+    settings.backupReminders = e.target.checked;
+    saveSettings();
+    maybeShowBackupReminder();
+  };
+  $("cloudBtn").onclick = () => { closeSheet(); cloudBackup(); };
   $("exportBtn").onclick = () => { exportBackup(); closeSheet(); };
   $("importBtn").onclick = () => $("importFile").click();
+  $("reminderBackup").onclick = () => cloudBackup();
+  $("reminderLater").onclick = () => {
+    localStorage.setItem(SNOOZE_KEY, String(Date.now() + 24 * 60 * 60 * 1000));
+    hideReminder();
+  };
   $("importFile").onchange = (e) => {
     if (e.target.files[0]) importBackup(e.target.files[0]);
     e.target.value = "";
@@ -465,6 +562,7 @@ async function init() {
   requestPersistence();
   registerSW();
   checkForUpdate();
+  maybeShowBackupReminder();
 }
 async function requestPersistence() {
   try {

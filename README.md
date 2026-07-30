@@ -3,13 +3,14 @@
 A very simple, installable **Pokémon TCG pack-artwork collection tracker**. Browse
 sets **by era**, tap the booster pack designs you own, and watch your completion
 progress fill up. Newest sets appear first, English shows by default (other
-languages are one toggle away), and the catalog **auto-updates** when new sets are
-released. Works offline once installed and stores your collection locally
-on-device.
+languages are one toggle away), promo sets are optional, and the catalog
+**auto-updates** when new sets are released. Works offline once installed and
+stores your collection locally on-device, with one-tap **cloud backup**.
 
-Artwork comes from the community asset repo
+Artwork and set metadata come from the community asset repo
 [1niceroli/ptcg-assets](https://github.com/1niceroli/ptcg-assets)
-(**287 sets · 779 pack artworks**).
+(physical sets only — **269 sets · 750 pack artworks**; the digital Pokémon TCG
+Pocket line is intentionally excluded).
 
 ---
 
@@ -38,13 +39,39 @@ Era (Scarlet & Violet, Sword & Shield, …)  ← newest era first
        └─ Pack artworks  ← tap to mark owned
 ```
 
-- **Newest first** everywhere — eras and sets are ordered most-recent → oldest.
+- **Newest first** everywhere — eras and sets are ordered most-recent → oldest,
+  using the repo README's chronological table.
+- **Era cards show artwork** — each era uses its namesake set's logo (e.g. the
+  *Scarlet & Violet* era shows the `sv1` logo).
 - **English by default.** Enable *Show other languages* in the menu to add a
-  language chooser as the first level (English, Japanese, German, Korean, …).
+  language chooser as the first level (English, Japanese, German, Chinese, Korean).
+- **Promo sets optional** — toggle *Show promo sets* off to hide Black Star Promos
+  and promo packs from lists and progress totals.
 - **Search** any set by name/code from any list level (great for jumping straight
   to a set without drilling).
 - **Hide complete** filter, per-era / per-set / overall progress bars.
-- **Backup**: export/import your collection as JSON; reset progress.
+- **Cloud backup**: one-tap backup to OneDrive / Google Drive / Dropbox (see below),
+  plus save/restore a JSON file and reset.
+
+## Backup & cloud sync
+
+Your collection lives in on-device storage, so backups matter. Options in the menu:
+
+- **☁︎ Back up to cloud** — uses the Web Share API to send the backup file straight
+  into your OneDrive / Google Drive / Dropbox (or email) app via the OS share sheet.
+  On desktop/unsupported browsers it falls back to a normal file download.
+- **⬇︎ Save backup file** / **⬆︎ Restore from backup** — classic JSON export/import.
+- **Backup reminders** (on by default) — if it's been a while (~7 days) since your
+  last backup and you have packs marked, a banner nudges you with a one-tap
+  *Back up* button so you don't forget. *Later* snoozes it for a day.
+
+> **Why not fully-automatic background cloud sync?** A pure static PWA (no server)
+> can't silently push to a cloud provider in the background: each of OneDrive /
+> Google Drive / Dropbox requires OAuth via a developer app you'd register, and
+> browsers block background uploads without stored tokens + a backend. The Web
+> Share + reminder approach gives reliable, one-tap cloud backups on Android with
+> zero setup. Full automatic Google Drive sync can be added later if you register a
+> free OAuth Client ID (see Plan).
 
 ## Auto-update — does it pull new sets automatically?
 
@@ -66,10 +93,15 @@ catalog. (Uses the public GitHub API, ~60 requests/hour/IP; one request per laun
 - [x] Era → Set → Pack drill-down nav, tap-to-toggle owned, progress bars
 - [x] English-only default + language toggle / chooser
 - [x] Search + "hide complete" filter
+- [x] README-driven set names, era grouping & chronological order & language
+- [x] Era cards show the namesake set's logo
+- [x] Optional promo-set visibility toggle
+- [x] Exclude the digital Pokémon TCG Pocket line
 - [x] Runtime GitHub auto-update (rebuild in-browser, offline cache, fallback)
-- [x] Export / import JSON backup + reset
+- [x] Cloud backup via Web Share + backup reminders; JSON save/restore + reset
 - [x] Offline service worker (app shell + runtime image cache)
 - [x] Installable manifest + persistent storage request
+- [ ] (Optional) Full Google Drive auto-sync (needs a free OAuth Client ID)
 - [ ] (Optional) Capacitor wrap → APK / Play Store
 
 ## Usage
