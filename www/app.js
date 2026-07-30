@@ -345,6 +345,7 @@ function markBackedUp() {
   localStorage.setItem(LASTBACKUP_KEY, String(Date.now()));
   localStorage.removeItem(SNOOZE_KEY);
   hideReminder();
+  updateSyncStatus();
 }
 function downloadJSON(json, filename) {
   const blob = new Blob([json], { type: "application/json" });
@@ -359,33 +360,6 @@ function exportBackup() {
   downloadJSON(JSON.stringify(backupPayload(), null, 2), backupFilename());
   markBackedUp();
   toast("Backup saved");
-}
-// Send the backup straight to a cloud app (OneDrive/Drive/Dropbox/…) via the
-// OS share sheet on supported devices; fall back to a file download.
-async function cloudBackup() {
-  const json = JSON.stringify(backupPayload(), null, 2);
-  const filename = backupFilename();
-  const file = new File([json], filename, { type: "application/json" });
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({
-        files: [file],
-        title: "Pokémon Pack Tracker backup",
-        text: "Save this backup to your cloud storage (OneDrive, Google Drive, Dropbox…).",
-      });
-      markBackedUp();
-      toast("Backup sent to cloud");
-    } catch (e) {
-      if (e && e.name === "AbortError") return; // user dismissed the share sheet
-      downloadJSON(json, filename);
-      markBackedUp();
-      toast("Backup saved (sharing unavailable)");
-    }
-  } else {
-    downloadJSON(json, filename);
-    markBackedUp();
-    toast("Backup saved — move it to your cloud folder");
-  }
 }
 function importBackup(file) {
   const reader = new FileReader();
@@ -429,10 +403,49 @@ function maybeShowBackupReminder() {
 /* ---------------- Google Drive sync ---------------- */
 let driveSyncTimer = null;
 
+function relTime(ts) {
+  if (!ts) return "never";
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 45) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+// Live sync indicator on the main screen.
+function updateSyncStatus(state) {
+  const el = $("syncStatus");
+  if (!el) return;
+  if (state === "saving" && gdrive.isConnected()) {
+    el.className = "sync-status syncing";
+    el.textContent = "☁ Saving to Drive…";
+    el.hidden = false;
+    return;
+  }
+  const last = lastBackupAt();
+  if (gdrive.isConnected()) {
+    el.className = "sync-status synced";
+    el.textContent = `☁ Synced to Drive · ${relTime(last)}`;
+    el.hidden = false;
+  } else if (owned.size === 0) {
+    el.hidden = true;
+  } else if (last) {
+    el.className = "sync-status";
+    el.textContent = `✓ Backed up · ${relTime(last)}`;
+    el.hidden = false;
+  } else {
+    el.className = "sync-status warn";
+    el.textContent = "⚠ Not backed up";
+    el.hidden = false;
+  }
+}
+
 function updateDriveStatus() {
   const el = $("driveStatus");
   if (!el) return;
-  if (!gdrive.hasClientId()) el.textContent = "Not configured — add a Client ID below to enable.";
+  if (!gdrive.hasClientId()) el.textContent = "Not configured.";
   else if (gdrive.isConnected()) el.textContent = "Connected — auto-syncing to your Drive.";
   else if (settings.gdriveConnected) el.textContent = "Configured — reconnecting…";
   else el.textContent = "Configured — tap Connect to sign in.";
@@ -463,28 +476,31 @@ async function syncWithDrive(pull) {
     /* offline / token expired — will retry on next change or launch */
   }
   updateDriveStatus();
+  updateSyncStatus();
 }
 
 // Debounced push after collection changes.
 function scheduleDriveSync() {
-  if (!gdrive.isConnected()) return;
+  if (!gdrive.isConnected()) {
+    updateSyncStatus();
+    return;
+  }
+  updateSyncStatus("saving");
   clearTimeout(driveSyncTimer);
   driveSyncTimer = setTimeout(() => {
     gdrive
       .upload(JSON.stringify(backupPayload()))
       .then(() => markBackedUp())
-      .catch(() => {});
+      .catch(() => updateSyncStatus());
   }, 2500);
 }
 
 async function connectDrive() {
-  const id = ($("driveClientId").value || "").trim() || gdrive.DEFAULT_CLIENT_ID;
+  const id = settings.gdriveClientId || gdrive.DEFAULT_CLIENT_ID;
   if (!id) {
-    toast("Enter a Google Client ID first");
+    toast("No Google Client ID configured");
     return;
   }
-  settings.gdriveClientId = id;
-  saveSettings();
   gdrive.setClientId(id);
   toast("Opening Google sign-in…");
   try {
@@ -500,6 +516,7 @@ async function connectDrive() {
     toast("Drive connect failed — check the Client ID & origin");
   }
   updateDriveStatus();
+  updateSyncStatus();
 }
 
 function disconnectDrive() {
@@ -508,6 +525,7 @@ function disconnectDrive() {
   saveSettings();
   toast("Google Drive disconnected");
   updateDriveStatus();
+  updateSyncStatus();
 }
 
 async function restoreFromDrive() {
@@ -538,7 +556,6 @@ function openSheet() {
   $("optAutoUpdate").checked = settings.autoUpdate;
   $("optShowPromos").checked = settings.showPromos;
   $("optBackupReminders").checked = settings.backupReminders;
-  $("driveClientId").value = settings.gdriveClientId || "";
   updateDriveStatus();
   const updated = DATA.generatedAt ? new Date(DATA.generatedAt).toLocaleDateString() : "?";
   $("metaInfo").textContent =
@@ -645,13 +662,12 @@ async function init() {
     saveSettings();
     maybeShowBackupReminder();
   };
-  $("cloudBtn").onclick = () => { closeSheet(); cloudBackup(); };
   $("driveConnectBtn").onclick = connectDrive;
   $("driveDisconnectBtn").onclick = disconnectDrive;
   $("driveRestoreBtn").onclick = restoreFromDrive;
   $("exportBtn").onclick = () => { exportBackup(); closeSheet(); };
   $("importBtn").onclick = () => $("importFile").click();
-  $("reminderBackup").onclick = () => cloudBackup();
+  $("reminderBackup").onclick = () => { exportBackup(); };
   $("reminderLater").onclick = () => {
     localStorage.setItem(SNOOZE_KEY, String(Date.now() + 24 * 60 * 60 * 1000));
     hideReminder();
@@ -684,6 +700,7 @@ async function init() {
   registerSW();
   checkForUpdate();
   maybeShowBackupReminder();
+  updateSyncStatus();
   initDrive();
 }
 
@@ -696,6 +713,7 @@ async function initDrive() {
       await syncWithDrive(true);
     }
     updateDriveStatus();
+    updateSyncStatus();
   }
 }
 async function requestPersistence() {

@@ -27,6 +27,8 @@
       <div id="progressFill" class="progress-inner"></div>
     </div>
 
+    <div id="syncStatus" class="sync-status" hidden></div>
+
     <div id="backupReminder" class="reminder" hidden>
       <span id="reminderText">Back up your collection to the cloud.</span>
       <span class="reminder-actions">
@@ -82,20 +84,8 @@
         <button id="driveConnectBtn" class="menu-item">☁︎ Connect Google Drive</button>
         <button id="driveDisconnectBtn" class="menu-item" hidden>Disconnect Google Drive</button>
         <button id="driveRestoreBtn" class="menu-item" hidden>⤓ Restore from Drive</button>
-        <details class="drive-setup">
-          <summary>One-time setup</summary>
-          <input id="driveClientId" type="text" inputmode="url" autocomplete="off"
-                 placeholder="Google OAuth Client ID (…apps.googleusercontent.com)" />
-          <small>
-            Create a free OAuth <em>Web</em> Client ID in Google Cloud Console with
-            authorized JavaScript origin <code>https://chhcd.github.io</code>, then paste
-            it here and tap Connect. Uses the narrow <code>drive.file</code> scope — the
-            app can only see the single backup file it creates.
-          </small>
-        </details>
 
         <h2 class="mt">Collection</h2>
-        <button id="cloudBtn" class="menu-item">☁︎ Back up to cloud (OneDrive / Drive / Dropbox…)</button>
         <button id="exportBtn" class="menu-item">⬇︎ Save backup file</button>
         <button id="importBtn" class="menu-item">⬆︎ Restore from backup</button>
         <button id="clearBtn" class="menu-item danger">🗑 Reset all progress</button>
