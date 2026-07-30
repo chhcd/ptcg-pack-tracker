@@ -268,6 +268,10 @@ html, body {
 }
 .sheet-card {
   width: 100%;
+  max-height: 88vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   background: var(--surface);
   border-top-left-radius: 18px;
   border-top-right-radius: 18px;

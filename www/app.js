@@ -21,6 +21,7 @@ let settings = Object.assign(
     backupReminders: true,
     gdriveClientId: "",
     gdriveConnected: false,
+    gdriveEmail: "",
   },
   loadJSON(SETTINGS_KEY, {}),
 );
@@ -446,7 +447,10 @@ function updateDriveStatus() {
   const el = $("driveStatus");
   if (!el) return;
   if (!gdrive.hasClientId()) el.textContent = "Not configured.";
-  else if (gdrive.isConnected()) el.textContent = "Connected — auto-syncing to your Drive.";
+  else if (gdrive.isConnected())
+    el.textContent = settings.gdriveEmail
+      ? `Connected as ${settings.gdriveEmail} — auto-syncing.`
+      : "Connected — auto-syncing to your Drive.";
   else if (settings.gdriveConnected) el.textContent = "Configured — reconnecting…";
   else el.textContent = "Configured — tap Connect to sign in.";
   const connected = gdrive.isConnected();
@@ -496,7 +500,7 @@ function scheduleDriveSync() {
 }
 
 async function connectDrive() {
-  const id = settings.gdriveClientId || gdrive.DEFAULT_CLIENT_ID;
+  const id = gdrive.DEFAULT_CLIENT_ID || settings.gdriveClientId;
   if (!id) {
     toast("No Google Client ID configured");
     return;
@@ -506,9 +510,14 @@ async function connectDrive() {
   try {
     if (await gdrive.connect()) {
       settings.gdriveConnected = true;
+      const email = await gdrive.fetchEmail();
+      if (email) {
+        settings.gdriveEmail = email;
+        gdrive.setHint(email);
+      }
       saveSettings();
       await syncWithDrive(true);
-      toast("Google Drive connected");
+      toast(email ? `Connected as ${email}` : "Google Drive connected");
     } else {
       toast("Connection cancelled");
     }
@@ -521,7 +530,9 @@ async function connectDrive() {
 
 function disconnectDrive() {
   gdrive.disconnect();
+  gdrive.setHint("");
   settings.gdriveConnected = false;
+  settings.gdriveEmail = "";
   saveSettings();
   toast("Google Drive disconnected");
   updateDriveStatus();
@@ -707,7 +718,8 @@ async function init() {
 // Configure Drive from saved settings and silently reconnect if the user
 // previously connected (no popup for an already-consented session).
 async function initDrive() {
-  gdrive.setClientId(settings.gdriveClientId || gdrive.DEFAULT_CLIENT_ID);
+  gdrive.setClientId(gdrive.DEFAULT_CLIENT_ID || settings.gdriveClientId);
+  gdrive.setHint(settings.gdriveEmail || "");
   if (settings.gdriveConnected && gdrive.hasClientId() && navigator.onLine) {
     if (await gdrive.reconnect()) {
       await syncWithDrive(true);

@@ -17,6 +17,7 @@ export const DEFAULT_CLIENT_ID =
   "652207901743-ihc96b9bh4pg4kl0lmc36779trf6mcu3.apps.googleusercontent.com";
 
 let clientId = "";
+let hint = "";
 let tokenClient = null;
 let accessToken = null;
 let tokenExpiry = 0;
@@ -47,6 +48,9 @@ export function setClientId(id) {
     tokenExpiry = 0;
   }
 }
+export function setHint(email) {
+  hint = email || "";
+}
 export function hasClientId() {
   return !!clientId;
 }
@@ -67,9 +71,12 @@ async function ensureTokenClient() {
   return tokenClient;
 }
 
-// Request an access token. interactive=false attempts a silent grant (no popup)
-// for users who have already consented; interactive=true shows the consent UI.
-function requestToken(interactive) {
+// Request an access token.
+//   mode "silent"      -> prompt:'none' (NO UI at all; errors if it can't,
+//                         so launches never show an unexpected popup)
+//   mode "interactive" -> normal flow (account chooser / consent as needed)
+// A saved account `hint` lets the silent flow pick the right account without UI.
+function requestToken(mode) {
   return new Promise(async (resolve, reject) => {
     try {
       const tc = await ensureTokenClient();
@@ -83,31 +90,41 @@ function requestToken(interactive) {
         }
       };
       tc.error_callback = (err) => reject(new Error(err && err.type ? err.type : "oauth_error"));
-      tc.requestAccessToken({ prompt: interactive ? "consent" : "" });
+      const cfg = mode === "silent" ? { prompt: "none" } : { prompt: "" };
+      if (hint) cfg.hint = hint;
+      tc.requestAccessToken(cfg);
     } catch (e) {
       reject(e);
     }
   });
 }
 
-async function token(interactive) {
-  if (isConnected()) return accessToken;
-  return requestToken(interactive);
-}
-
-/** Interactive connect (shows Google consent). Returns true on success. */
+/** Interactive connect (shows Google account chooser/consent). */
 export async function connect() {
-  await token(true);
+  if (isConnected()) return true;
+  await requestToken("interactive");
   return isConnected();
 }
 
-/** Silent reconnect for a returning, already-consented user. */
+/** Silent reconnect for a returning user — never shows UI. */
 export async function reconnect() {
+  if (isConnected()) return true;
   try {
-    await token(false);
+    await requestToken("silent");
     return isConnected();
   } catch {
     return false;
+  }
+}
+
+/** Fetch the signed-in user's email (works with the drive.file scope). */
+export async function fetchEmail() {
+  try {
+    const res = await api("https://www.googleapis.com/drive/v3/about?fields=user");
+    const data = await res.json();
+    return (data.user && data.user.emailAddress) || "";
+  } catch {
+    return "";
   }
 }
 
@@ -143,9 +160,14 @@ async function findFileId() {
   return fileId;
 }
 
+async function ensureToken() {
+  if (isConnected()) return accessToken;
+  return requestToken("silent");
+}
+
 /** Upload the given JSON string as the backup file (creates or updates). */
 export async function upload(jsonString) {
-  await token(false);
+  await ensureToken();
   const id = await findFileId();
   if (id) {
     await api(
@@ -172,7 +194,7 @@ export async function upload(jsonString) {
 
 /** Download the backup file's parsed contents, or null if none exists. */
 export async function download() {
-  await token(false);
+  await ensureToken();
   const id = await findFileId();
   if (!id) return null;
   const res = await api(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`);
