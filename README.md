@@ -1,9 +1,11 @@
 # PTCG Pack Tracker
 
 A very simple, installable **Pokémon TCG pack-artwork collection tracker**. Browse
-sets **by era**, tap the booster pack designs you own, and watch your completion
-progress fill up. Newest sets appear first, English shows by default (other
-languages are one toggle away), promo sets are optional, and the catalog
+sets **by era**, tap the booster pack designs to mark them **owned**, **ordered**
+(bought, waiting to arrive) or not collected, track **how many copies** you own of
+a design, and see your collection's **TCGplayer market value** (and what the packs
+you're missing would cost). Newest sets appear first, English shows by default
+(other languages are one toggle away), promo sets are optional, and the catalog
 **auto-updates** when new sets are released. Works offline once installed and
 stores your collection locally on-device, with one-tap **cloud backup**.
 
@@ -39,6 +41,17 @@ Era (Scarlet & Violet, Sword & Shield, …)  ← newest era first
        └─ Pack artworks  ← tap to mark owned
 ```
 
+- **Three collection states.** Tapping a pack cycles **not collected → owned →
+  ordered → not collected**. *Ordered* (amber 🛒 badge, half-lit art) means you've
+  bought it and are waiting for it to arrive, so you won't buy it twice. Only
+  *owned* packs count toward completion progress.
+- **Multiple copies per design.** Own more than one of the same pack art? Use the
+  small **＋ / −** stepper on an owned pack to set a count; a **×N** badge appears
+  only when you have 2 or more (single copies stay clean — no "1×" clutter).
+- **Prices & collection value.** Every set shows the **TCGplayer market price** of a
+  single booster pack; the app totals what you **own** (× copies), what you've
+  **ordered**, and what the packs you're **missing** would cost. Toggle *Show
+  prices* off to hide it. See [Pricing](#pricing) below.
 - **Newest first** everywhere — eras and sets are ordered most-recent → oldest,
   using the repo README's chronological table.
 - **Era cards show artwork** — each era uses its namesake set's logo (e.g. the
@@ -114,6 +127,27 @@ a new set, it appears in the app on the next launch — no rebuild or reinstall
 needed. Toggle *Auto-update from GitHub* off in the menu to pin the bundled
 catalog. (Uses the public GitHub API, ~60 requests/hour/IP; one request per launch.)
 
+## Pricing
+
+Each set's price is the **TCGplayer market price of a single loose booster pack**,
+in USD. Artwork variants of the same set share the same loose-pack price, so prices
+are keyed by set code and the app multiplies by how many packs you own (respecting
+per-design counts). The menu's *Collection* section shows the totals: **Owned**,
+**Ordered** and **Missing** value.
+
+Prices come from the free, key-less **[TCGCSV](https://tcgcsv.com)** daily mirror of
+TCGplayer. TCGCSV doesn't send CORS headers, so the browser can't fetch it directly;
+instead `tools/build-prices.mjs` fetches it at build time into a bundled
+`www/prices.json`, and a scheduled GitHub Action
+(`.github/workflows/refresh-prices.yml`) regenerates it **daily** so the app stays
+current while remaining fully offline-capable. Sets that don't have an active
+single-pack market on TCGplayer (promos, brand-new sets, thinly-traded vintage)
+simply show no price and are excluded from the totals; they fill in automatically
+once TCGplayer lists a market price.
+
+> Prices are market **estimates** for reference, not an appraisal. This is a
+> personal, non-commercial fan tool.
+
 ## Plan
 
 - [x] Index the asset repo into `www/data.json` (`tools/build-data.mjs`)
@@ -121,6 +155,10 @@ catalog. (Uses the public GitHub API, ~60 requests/hour/IP; one request per laun
       ordering** and **language detection** (`www/catalog.mjs`)
 - [x] Generate maskable Pokéball PWA icons (`tools/make-icons.mjs`)
 - [x] Era → Set → Pack drill-down nav, tap-to-toggle owned, progress bars
+- [x] Three pack states (not collected / owned / **ordered**) via tap-cycle
+- [x] Per-design copy counts (×N badge, ＋/− stepper; hidden for single copies)
+- [x] TCGplayer single-pack pricing: owned / ordered / missing collection value
+- [x] Daily price refresh Action (`build-prices.mjs` → `www/prices.json`)
 - [x] English-only default + language toggle / chooser
 - [x] Search + "hide complete" filter
 - [x] README-driven set names, era grouping & chronological order & language
@@ -142,6 +180,9 @@ npm start            # -> http://localhost:5173
 
 # Refresh the catalog from the asset repo (optional; pin a commit for stability)
 npm run build-data -- 89dca879388e39697a409c27e9c96c542576beda
+
+# Refresh pack prices from TCGCSV (writes www/prices.json; runs daily via Actions)
+npm run build-prices
 
 # Regenerate icons
 npm run make-icons
@@ -177,6 +218,12 @@ Verified in a headless browser (Playwright):
 - Language toggle adds a chooser (English, German, Japanese, Korean), English first.
 - Search jumps to any set by name/code; "Hide complete" filters.
 - Owned state persists across reloads; export/import/reset work.
+- Pack states cycle not-collected → owned → ordered → not-collected; only owned
+  counts toward progress; ordered + per-design counts persist across reloads and
+  round-trip through backup/Drive sync (backward compatible with old owned-only
+  backups).
+- Pricing: `www/prices.json` loads; owned (× copies) / ordered / missing values
+  total correctly in headers, cards and the menu summary; *Show prices* hides them.
 - Auto-update: GitHub API reachable via CORS; in-browser `buildCatalog` rebuild of
   the live tree yields identical 287/779 and is cached for offline.
 - Service worker registers; shell + images cached; zero console errors.
@@ -194,9 +241,11 @@ ptcg-pack-tracker/
 │  ├─ sw.js                  # offline service worker
 │  ├─ manifest.webmanifest
 │  ├─ data.json             # generated catalog (bundled fallback)
+│  ├─ prices.json           # generated single-pack prices (TCGCSV/TCGplayer)
 │  └─ icons/                # generated PNG icons
 ├─ tools/
 │  ├─ build-data.mjs        # build data.json via www/catalog.mjs
+│  ├─ build-prices.mjs      # build prices.json from TCGCSV
 │  ├─ make-icons.mjs        # generate PWA icons
 │  └─ serve.mjs             # tiny static dev server
 ├─ capacitor.config.json

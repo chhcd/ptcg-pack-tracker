@@ -1,5 +1,5 @@
 // Offline support: precache the app shell + catalog, runtime-cache pack images.
-const VERSION = "v10";
+const VERSION = "v11";
 const SHELL_CACHE = `ptcg-shell-${VERSION}`;
 const IMG_CACHE = "ptcg-images";
 const CATALOG_CACHE = "ptcg-catalog";
@@ -12,6 +12,7 @@ const SHELL = [
   "./catalog.mjs",
   "./gdrive.js",
   "./data.json",
+  "./prices.json",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

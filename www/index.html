@@ -73,6 +73,13 @@
         </label>
         <label class="menu-item toggle">
           <span>
+            <strong>Show prices</strong>
+            <small>TCGplayer single-pack market value.</small>
+          </span>
+          <input id="optShowPrices" type="checkbox" />
+        </label>
+        <label class="menu-item toggle">
+          <span>
             <strong>Backup reminders</strong>
             <small>Nudge me to back up if it's been a while.</small>
           </span>
@@ -86,6 +93,7 @@
         <button id="driveRestoreBtn" class="menu-item" hidden>⤓ Restore from Drive</button>
 
         <h2 class="mt">Collection</h2>
+        <div id="valueSummary" class="value-summary" hidden></div>
         <button id="exportBtn" class="menu-item">⬇︎ Save backup file</button>
         <button id="importBtn" class="menu-item">⬆︎ Restore from backup</button>
         <button id="clearBtn" class="menu-item danger">🗑 Reset all progress</button>

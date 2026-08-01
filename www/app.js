@@ -2,22 +2,29 @@
 import { buildCatalog, LANG_NAMES, REPO_INFO } from "./catalog.mjs";
 import * as gdrive from "./gdrive.js";
 
-const STORE_KEY = "ptcg-collection-v1";
+const STORE_KEY = "ptcg-collection-v1"; // owned = collected
+const ORDERED_KEY = "ptcg-ordered-v1"; // ordered = bought, awaiting delivery
+const QTY_KEY = "ptcg-qty-v1"; // { packId: count } — only stored when count >= 2
 const SETTINGS_KEY = "ptcg-settings-v1";
 const LASTBACKUP_KEY = "ptcg-last-backup";
 const SNOOZE_KEY = "ptcg-backup-snooze";
 const BACKUP_INTERVAL = 7 * 24 * 60 * 60 * 1000; // remind after ~7 days
 const CATALOG_CACHE = "ptcg-catalog";
 const LIVE_URL = "/live-catalog.json"; // synthetic key inside CATALOG_CACHE
+const PRICES_URL = "prices.json";
 const $ = (id) => document.getElementById(id);
 
 let DATA = null;
+let PRICES = { prices: {} };
 let owned = new Set(loadJSON(STORE_KEY, []));
+let ordered = new Set(loadJSON(ORDERED_KEY, []));
+let quantities = normalizeQuantities(loadJSON(QTY_KEY, {}));
 let settings = Object.assign(
   {
     multiLang: false,
     autoUpdate: true,
     showPromos: true,
+    showPrices: true,
     backupReminders: true,
     gdriveClientId: "",
     gdriveConnected: false,
@@ -39,8 +46,60 @@ function loadJSON(key, fallback) {
 function saveOwned() {
   localStorage.setItem(STORE_KEY, JSON.stringify([...owned]));
 }
+function saveOrdered() {
+  localStorage.setItem(ORDERED_KEY, JSON.stringify([...ordered]));
+}
+function saveQuantities() {
+  localStorage.setItem(QTY_KEY, JSON.stringify(quantities));
+}
+function saveCollection() {
+  saveOwned();
+  saveOrdered();
+  saveQuantities();
+}
 function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+/* ---------------- collection state ---------------- */
+// Keep only integer counts >= 2 (a single copy is implicit, avoiding "1×" noise).
+function normalizeQuantities(raw) {
+  const out = {};
+  if (raw && typeof raw === "object") {
+    for (const [id, n] of Object.entries(raw)) {
+      const v = Math.floor(Number(n));
+      if (v >= 2) out[id] = v;
+    }
+  }
+  return out;
+}
+// A pack is "owned" (collected), "ordered" (waiting to arrive), or "none".
+function packState(id) {
+  return owned.has(id) ? "owned" : ordered.has(id) ? "ordered" : "none";
+}
+function qtyOf(id) {
+  return owned.has(id) ? quantities[id] || 1 : 0;
+}
+function setQty(id, n) {
+  const v = Math.max(1, Math.floor(n));
+  if (v >= 2 && owned.has(id)) quantities[id] = v;
+  else delete quantities[id];
+  saveQuantities();
+}
+// Tap cycles: none -> owned -> ordered -> none (a single tap still marks owned).
+function cyclePack(id) {
+  if (owned.has(id)) {
+    owned.delete(id);
+    delete quantities[id];
+    ordered.add(id);
+  } else if (ordered.has(id)) {
+    ordered.delete(id);
+  } else {
+    owned.add(id);
+    ordered.delete(id);
+  }
+  saveCollection();
+  return packState(id);
 }
 
 /* ---------------- catalog indexing ---------------- */
@@ -87,6 +146,11 @@ function ownedInSet(s) {
   for (const p of s.packs) if (owned.has(p.id)) n++;
   return n;
 }
+function orderedInSet(s) {
+  let n = 0;
+  for (const p of s.packs) if (ordered.has(p.id)) n++;
+  return n;
+}
 function agg(sets) {
   let done = 0, total = 0, setsDone = 0;
   for (const s of sets) {
@@ -99,6 +163,65 @@ function agg(sets) {
 }
 function setProgress(done, total) {
   $("progressFill").style.width = (total ? (done / total) * 100 : 0) + "%";
+}
+
+/* ---------------- pricing ---------------- */
+// Market price (USD) of a single booster pack for a set, or null if unknown.
+function packPrice(setCode) {
+  const v = PRICES.prices && PRICES.prices[setCode];
+  return typeof v === "number" ? v : null;
+}
+function money(n) {
+  if (!isFinite(n)) return "$0";
+  return n >= 1000
+    ? "$" + Math.round(n).toLocaleString()
+    : "$" + n.toFixed(2);
+}
+// Owned / ordered / missing value for one set (owned counts quantities).
+function setValues(s) {
+  const price = packPrice(s.code);
+  const hasPrice = price != null;
+  let ownedVal = 0, orderedVal = 0, missingVal = 0;
+  if (hasPrice) {
+    for (const p of s.packs) {
+      const st = packState(p.id);
+      if (st === "owned") ownedVal += price * (quantities[p.id] || 1);
+      else if (st === "ordered") orderedVal += price;
+      else missingVal += price;
+    }
+  }
+  return { price, hasPrice, ownedVal, orderedVal, missingVal };
+}
+function aggValues(sets) {
+  let owned = 0, ordered = 0, missing = 0, priced = 0;
+  for (const s of sets) {
+    const v = setValues(s);
+    if (!v.hasPrice) continue;
+    priced++;
+    owned += v.ownedVal;
+    ordered += v.orderedVal;
+    missing += v.missingVal;
+  }
+  return { owned, ordered, missing, priced };
+}
+// Compact "$owned · $missing to go" line for a list of sets (or one set).
+function valueRowHtml(sets) {
+  if (!settings.showPrices) return "";
+  const v = aggValues(sets);
+  if (!v.priced || v.owned + v.missing + v.ordered === 0) return "";
+  const parts = [`<span class="v-owned">${money(v.owned)}</span>`];
+  if (v.ordered > 0) parts.push(`${money(v.ordered)} ordered`);
+  if (v.missing > 0) parts.push(`${money(v.missing)} to go`);
+  return `<div class="set-value">${parts.join(" · ")}</div>`;
+}
+// Short " · $owned owned · $missing to go" appended to a list header subtitle.
+function valueSuffix(sets) {
+  if (!settings.showPrices) return "";
+  const v = aggValues(sets);
+  if (!v.priced) return "";
+  let s = ` · ${money(v.owned)} owned`;
+  if (v.missing > 0) s += ` · ${money(v.missing)} to go`;
+  return s;
 }
 
 /* ---------------- misc ---------------- */
@@ -136,6 +259,7 @@ function setCard(s) {
       <div class="set-name">${escapeHtml(s.name)}</div>
       <div class="set-code">${s.code}${s.lang !== "en" ? " · " + (LANG_NAMES[s.lang] || s.lang) : ""}</div>
       ${progressRow(o, s.packCount)}
+      ${valueRowHtml([s])}
     </div>`;
   return card;
 }
@@ -153,6 +277,7 @@ function groupCard({ title, subtitle, sets, onclick, badge, image }) {
       <div class="set-name">${escapeHtml(title)}</div>
       <div class="set-code">${subtitle}</div>
       ${progressRow(a.done, a.total)}
+      ${valueRowHtml(sets)}
     </div>
     <div class="chev">›</div>`;
   return card;
@@ -193,7 +318,7 @@ function renderSearch(scopeLang) {
 }
 function renderLanguages() {
   const overall = agg(visibleSets().filter((s) => s.lang === "en"));
-  header("Pack Tracker", `${overall.done}/${overall.total} English packs`, false, true);
+  header("Pack Tracker", `${overall.done}/${overall.total} English packs` + valueSuffix(visibleSets().filter((s) => s.lang === "en")), false, true);
   setProgress(overall.done, overall.total);
   if (currentQuery()) return renderSearch(null);
 
@@ -220,7 +345,7 @@ function renderEras(lang) {
   const langName = LANG_NAMES[lang] || lang.toUpperCase();
   header(
     settings.multiLang ? langName : "Pack Tracker",
-    `${a.done}/${a.total} packs · ${a.setsDone}/${a.setCount} sets complete`,
+    `${a.done}/${a.total} packs · ${a.setsDone}/${a.setCount} sets complete` + valueSuffix(langSets),
     settings.multiLang,
     true,
   );
@@ -260,7 +385,7 @@ function renderSets(lang, eraId) {
   const sets = setsFor(lang, eraId);
   const eraName = sets[0] ? sets[0].eraName : eraId;
   const a = agg(sets);
-  header(eraName, `${a.done}/${a.total} packs · ${a.setsDone}/${a.setCount} sets`, true, true);
+  header(eraName, `${a.done}/${a.total} packs · ${a.setsDone}/${a.setCount} sets` + valueSuffix(sets), true, true);
   setProgress(a.done, a.total);
   if (currentQuery()) return renderSearch(lang);
 
@@ -270,35 +395,79 @@ function renderSets(lang, eraId) {
     .map(setCard);
   renderList(cards, "No sets in this era.");
 }
+function updatePackHeader(s) {
+  const o = ownedInSet(s);
+  const ord = orderedInSet(s);
+  let sub = `${s.code.toUpperCase()} · ${o}/${s.packCount} packs`;
+  if (ord) sub += ` · ${ord} ordered`;
+  if (settings.showPrices) {
+    const v = setValues(s);
+    if (v.hasPrice) {
+      sub += ` · ${money(v.ownedVal)} owned`;
+      if (v.missingVal > 0) sub += ` · ${money(v.missingVal)} to go`;
+    }
+  }
+  header(s.name, sub, true, false);
+  setProgress(o, s.packCount);
+}
+function packTileHtml(p, priceStr) {
+  const q = quantities[p.id] || 1;
+  const many = q >= 2;
+  return `<div class="pmark check">✓</div>
+    <div class="pmark cart">🛒</div>
+    <div class="qty-badge"${many ? "" : " hidden"}>×${q}</div>
+    <img loading="lazy" src="${p.img}" alt="${escapeHtml(p.name)}" onerror="this.style.opacity=0.2">
+    <div class="pname">${escapeHtml(p.name)}</div>
+    ${priceStr ? `<div class="pprice">${priceStr}</div>` : ""}
+    <div class="qty-ctrl"${owned.has(p.id) ? "" : " hidden"}>
+      <button class="qbtn qminus"${many ? "" : " hidden"} aria-label="Remove one">−</button>
+      <span class="qval"${many ? "" : " hidden"}>${q}</span>
+      <button class="qbtn qplus" aria-label="Add one">+</button>
+    </div>`;
+}
+function bindTile(el, s, p, priceStr) {
+  const refresh = () => {
+    el.className = "pack pack--" + packState(p.id);
+    el.innerHTML = packTileHtml(p, priceStr);
+    bindTile(el, s, p, priceStr);
+    updatePackHeader(s);
+    scheduleDriveSync();
+  };
+  el.onclick = (e) => {
+    if (e.target.closest(".qty-ctrl")) return; // handled by the +/- buttons
+    cyclePack(p.id);
+    refresh();
+  };
+  el.querySelector(".qplus").onclick = (e) => {
+    e.stopPropagation();
+    if (!owned.has(p.id)) return;
+    setQty(p.id, (quantities[p.id] || 1) + 1);
+    refresh();
+  };
+  const minus = el.querySelector(".qminus");
+  if (minus)
+    minus.onclick = (e) => {
+      e.stopPropagation();
+      setQty(p.id, (quantities[p.id] || 1) - 1);
+      refresh();
+    };
+}
 function renderPacks(code) {
   const s = setByCode.get(code);
   if (!s) {
     location.hash = "";
     return;
   }
-  const o = ownedInSet(s);
-  header(s.name, `${s.code.toUpperCase()} · ${o}/${s.packCount} packs`, true, false);
-  setProgress(o, s.packCount);
-
+  updatePackHeader(s);
+  const priceStr = settings.showPrices && packPrice(s.code) != null ? money(packPrice(s.code)) : null;
   const app = $("app");
   const grid = document.createElement("div");
   grid.className = "pack-grid";
   for (const p of s.packs) {
     const el = document.createElement("div");
-    el.className = "pack" + (owned.has(p.id) ? " owned" : "");
-    el.innerHTML = `<div class="check">✓</div>
-      <img loading="lazy" src="${p.img}" alt="${escapeHtml(p.name)}" onerror="this.style.opacity=0.2">
-      <div class="pname">${escapeHtml(p.name)}</div>`;
-    el.onclick = () => {
-      if (owned.has(p.id)) owned.delete(p.id);
-      else owned.add(p.id);
-      saveOwned();
-      el.classList.toggle("owned");
-      const oo = ownedInSet(s);
-      $("subtitle").textContent = `${s.code.toUpperCase()} · ${oo}/${s.packCount} packs`;
-      setProgress(oo, s.packCount);
-      scheduleDriveSync();
-    };
+    el.className = "pack pack--" + packState(p.id);
+    el.innerHTML = packTileHtml(p, priceStr);
+    bindTile(el, s, p, priceStr);
     grid.appendChild(el);
   }
   app.innerHTML = "";
@@ -333,10 +502,12 @@ function goBack() {
 function backupPayload() {
   return {
     app: "ptcg-pack-tracker",
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     catalogCommit: DATA.commit,
     owned: [...owned],
+    ordered: [...ordered],
+    quantities: { ...quantities },
   };
 }
 function backupFilename() {
@@ -347,6 +518,25 @@ function markBackedUp() {
   localStorage.removeItem(SNOOZE_KEY);
   hideReminder();
   updateSyncStatus();
+}
+// Enforce invariants: a pack is never both owned and ordered; quantities only
+// exist (>= 2) for owned packs.
+function sanitizeCollection() {
+  for (const id of [...ordered]) if (owned.has(id)) ordered.delete(id);
+  for (const id of Object.keys(quantities))
+    if (!owned.has(id) || quantities[id] < 2) delete quantities[id];
+}
+// Replace the whole collection from a backup/Drive payload (v1 array or
+// v1/v2 object). Returns the number of owned packs restored.
+function applyBackup(data) {
+  const ownArr = Array.isArray(data) ? data : data && data.owned;
+  if (!Array.isArray(ownArr)) throw new Error("bad file");
+  owned = new Set(ownArr);
+  ordered = new Set(Array.isArray(data && data.ordered) ? data.ordered : []);
+  quantities = normalizeQuantities(data && data.quantities);
+  sanitizeCollection();
+  saveCollection();
+  return ownArr.length;
 }
 function downloadJSON(json, filename) {
   const blob = new Blob([json], { type: "application/json" });
@@ -367,13 +557,10 @@ function importBackup(file) {
   reader.onload = () => {
     try {
       const data = JSON.parse(reader.result);
-      const arr = Array.isArray(data) ? data : data.owned;
-      if (!Array.isArray(arr)) throw new Error("bad file");
-      owned = new Set(arr);
-      saveOwned();
+      const n = applyBackup(data);
       markBackedUp();
       route();
-      toast(`Restored ${arr.length} packs`);
+      toast(`Restored ${n} packs`);
     } catch {
       toast("Restore failed: invalid file");
     }
@@ -466,10 +653,17 @@ async function syncWithDrive(pull) {
     if (pull) {
       const remote = await gdrive.download();
       if (remote && Array.isArray(remote.owned)) {
-        const before = owned.size;
+        const before = owned.size + ordered.size + Object.keys(quantities).length;
         for (const id of remote.owned) owned.add(id);
-        if (owned.size !== before) {
-          saveOwned();
+        if (Array.isArray(remote.ordered))
+          for (const id of remote.ordered) if (!owned.has(id)) ordered.add(id);
+        if (remote.quantities && typeof remote.quantities === "object")
+          for (const [id, q] of Object.entries(remote.quantities))
+            if (owned.has(id)) quantities[id] = Math.max(quantities[id] || 1, Math.floor(Number(q)) || 1);
+        sanitizeCollection();
+        const after = owned.size + ordered.size + Object.keys(quantities).length;
+        if (after !== before) {
+          saveCollection();
           route();
         }
       }
@@ -547,11 +741,10 @@ async function restoreFromDrive() {
   try {
     const remote = await gdrive.download();
     if (remote && Array.isArray(remote.owned)) {
-      owned = new Set(remote.owned);
-      saveOwned();
+      const n = applyBackup(remote);
       markBackedUp();
       route();
-      toast(`Restored ${remote.owned.length} packs from Drive`);
+      toast(`Restored ${n} packs from Drive`);
     } else {
       toast("No Drive backup found yet");
     }
@@ -566,12 +759,33 @@ function openSheet() {
   $("optMultiLang").checked = settings.multiLang;
   $("optAutoUpdate").checked = settings.autoUpdate;
   $("optShowPromos").checked = settings.showPromos;
+  $("optShowPrices").checked = settings.showPrices;
   $("optBackupReminders").checked = settings.backupReminders;
   updateDriveStatus();
+  updateValueSummary();
   const updated = DATA.generatedAt ? new Date(DATA.generatedAt).toLocaleDateString() : "?";
   $("metaInfo").textContent =
     `Catalog: ${DATA.setCount} sets · ${DATA.packCount} packs · commit ${String(DATA.commit).slice(0, 7)} · updated ${updated}`;
   $("sheet").hidden = false;
+}
+// Overall collection value (English sets, honoring the promo toggle).
+function updateValueSummary() {
+  const el = $("valueSummary");
+  if (!el) return;
+  if (!settings.showPrices) {
+    el.hidden = true;
+    return;
+  }
+  const v = aggValues(visibleSets().filter((s) => s.lang === "en"));
+  const priced = PRICES.generatedAt
+    ? new Date(PRICES.generatedAt).toLocaleDateString()
+    : "";
+  el.innerHTML =
+    `<div class="val-line"><span>Owned</span><b class="v-owned">${money(v.owned)}</b></div>` +
+    `<div class="val-line"><span>Ordered</span><b>${money(v.ordered)}</b></div>` +
+    `<div class="val-line"><span>Missing</span><b>${money(v.missing)}</b></div>` +
+    `<div class="val-src">TCGplayer single-pack market${priced ? " · updated " + priced : ""}</div>`;
+  el.hidden = false;
 }
 function closeSheet() {
   $("sheet").hidden = true;
@@ -605,6 +819,17 @@ async function loadCatalog() {
     DATA = await res.json();
   }
   indexCatalog();
+}
+async function loadPrices() {
+  try {
+    const res = await fetch(PRICES_URL, { cache: "no-cache" });
+    if (res.ok) {
+      const p = await res.json();
+      if (p && p.prices) PRICES = p;
+    }
+  } catch {
+    /* prices are optional — the app works without them */
+  }
 }
 async function ghJSON(path) {
   const res = await fetch(
@@ -668,6 +893,12 @@ async function init() {
     saveSettings();
     route();
   };
+  $("optShowPrices").onchange = (e) => {
+    settings.showPrices = e.target.checked;
+    saveSettings();
+    updateValueSummary();
+    route();
+  };
   $("optBackupReminders").onchange = (e) => {
     settings.backupReminders = e.target.checked;
     saveSettings();
@@ -691,7 +922,9 @@ async function init() {
   $("clearBtn").onclick = () => {
     if (confirm("Reset ALL collection progress? This cannot be undone.")) {
       owned = new Set();
-      saveOwned();
+      ordered = new Set();
+      quantities = {};
+      saveCollection();
       route();
       toast("Progress reset");
     }
@@ -705,6 +938,7 @@ async function init() {
     $("app").innerHTML = `<p class="empty">Failed to load catalog. Check your connection and reopen.</p>`;
     return;
   }
+  await loadPrices();
 
   route();
   requestPersistence();
